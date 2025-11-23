@@ -12,9 +12,10 @@ Run:
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Any
 import string
 import re
+from urllib.parse import quote
 
 from recipe_api import parse_recipe_from_url, Recipe, Step
 
@@ -24,16 +25,24 @@ try:
 except ImportError:
     sr = None
 
+# Constants
+EXIT_COMMANDS = ["quit", "exit", "q"]
+QUIT_MESSAGE = "Bot: Goodbye!"
+
 
 class RecipeBot:
     def __init__(self, use_speech: bool = False):
         self.recipe: Optional[Recipe] = None
         self.current_step_idx: int = 0  # index in recipe.steps
         self.use_speech = use_speech and (sr is not None)
+        self.recognizer: Optional[Any] = None  # speech_recognition.Recognizer if sr is available
 
         if use_speech and sr is None:
             print("Bot: speech_recognition is not installed; falling back to text input.")
             self.use_speech = False
+        elif use_speech:
+            # Initialize recognizer once for reuse
+            self.recognizer = sr.Recognizer()
 
     # -------------------------
     # Utility: normalization
@@ -68,10 +77,13 @@ class RecipeBot:
             if user is None:
                 # speech recognition failed; just keep looping
                 continue
+            
+            if not user:  # Handle empty input
+                continue
 
             norm = self.normalize(user)
-            if norm in ["quit", "exit", "q"]:
-                print("Bot: Goodbye!")
+            if norm in EXIT_COMMANDS:
+                print(QUIT_MESSAGE)
                 break
 
             response = self.handle_input(user)
@@ -83,25 +95,36 @@ class RecipeBot:
         Returns recognized text or None on STT failure.
         """
         if not self.use_speech:
-            return input("User: ").strip()
+            try:
+                return input("User: ").strip()
+            except KeyboardInterrupt:
+                print(f"\n{QUIT_MESSAGE}")
+                return "quit"
 
         # Speech mode
-        recognizer = sr.Recognizer()
-        with sr.Microphone() as source:
-            print("User (speak): ", end="", flush=True)
-            audio = recognizer.listen(source)
-
+        if self.recognizer is None:
+            self.recognizer = sr.Recognizer()
+        
         try:
-            text = recognizer.recognize_google(audio)
-            print(text)  # echo recognized text
-            return text.strip()
-        except sr.UnknownValueError:
-            print("\nBot: Sorry, I didn't catch that. Please repeat.")
-            return None
-        except sr.RequestError as e:
-            print(f"\nBot: STT service error ({e}). Falling back to keyboard input.")
-            self.use_speech = False
-            return input("User: ").strip()
+            with sr.Microphone() as source:
+                print("User (speak): ", end="", flush=True)
+                audio = self.recognizer.listen(source)
+
+            try:
+                text = self.recognizer.recognize_google(audio)
+                print(text)  # echo recognized text
+                return text.strip()
+            except sr.UnknownValueError:
+                print("\nBot: Sorry, I didn't catch that. Please repeat.")
+                return None
+            except sr.RequestError as e:
+                print(f"\nBot: STT service error ({e}). Falling back to keyboard input.")
+                self.use_speech = False
+                self.recognizer = None
+                return input("User: ").strip()
+        except KeyboardInterrupt:
+            print(f"\n{QUIT_MESSAGE}")
+            return "quit"
 
     # -------------------------
     # Input handling
@@ -163,17 +186,17 @@ class RecipeBot:
 
         # 5. Clarification: "what is X" (simple external search)
         if norm.startswith("what is "):
-            query = norm[len("what is "):].strip().replace(" ", "+")
-            return f"https://www.google.com/search?q=what+is+{query}"
+            query = norm[len("what is "):].strip()
+            return f"https://www.google.com/search?q=what+is+{quote(query)}"
 
         # 6. Procedure: "how do I X" / "how to X"
         if norm.startswith("how do i "):
-            query = norm[len("how do i "):].strip().replace(" ", "+")
-            return f"https://www.youtube.com/results?search_query=how+to+{query}"
+            query = norm[len("how do i "):].strip()
+            return f"https://www.youtube.com/results?search_query=how+to+{quote(query)}"
 
         if norm.startswith("how to "):
-            query = norm[len("how to "):].strip().replace(" ", "+")
-            return f"https://www.youtube.com/results?search_query=how+to+{query}"
+            query = norm[len("how to "):].strip()
+            return f"https://www.youtube.com/results?search_query=how+to+{quote(query)}"
 
         # Vague "How do I do that?"
         if "how do i do that" in norm or "how do i do this" in norm or "how do i do it" in norm:
@@ -262,7 +285,24 @@ class RecipeBot:
     # Recipe loading & display
     # -------------------------
 
+    @staticmethod
+    def format_ingredient(ing: Ingredient) -> str:
+        """Format an ingredient for display."""
+        q = f"{ing.quantity:g} " if ing.quantity is not None else ""
+        unit = f"{ing.unit} " if ing.unit else ""
+        desc = f"{ing.descriptor} " if ing.descriptor else ""
+        prep = f", {ing.preparation}" if ing.preparation else ""
+        return f"{q}{unit}{desc}{ing.name}{prep}"
+
     def load_recipe(self, url: str) -> str:
+        """Load a recipe from the given URL."""
+        if not url or not url.strip():
+            return "Please provide a valid URL."
+        
+        # Basic URL validation
+        if not (url.startswith("http://") or url.startswith("https://")):
+            return "Please provide a valid URL starting with http:// or https://"
+        
         try:
             self.recipe = parse_recipe_from_url(url)
             self.current_step_idx = 0
@@ -270,18 +310,18 @@ class RecipeBot:
                     "What do you want to do?\n"
                     "[1] Go over ingredients list\n"
                     "[2] Go over recipe steps.")
+        except ValueError as e:
+            return f"Could not parse the recipe from that URL: {e}"
         except Exception as e:
             return f"Something went wrong loading that recipe: {e}"
 
     def show_ingredients(self) -> str:
-        assert self.recipe is not None
+        """Display all ingredients for the current recipe."""
+        if self.recipe is None:
+            return "No recipe loaded. Please load a recipe first."
         lines = [f'Here are the ingredients for "{self.recipe.title}":']
         for ing in self.recipe.ingredients:
-            q = f"{ing.quantity:g} " if ing.quantity is not None else ""
-            unit = f"{ing.unit} " if ing.unit else ""
-            desc = f"{ing.descriptor} " if ing.descriptor else ""
-            prep = f", {ing.preparation}" if ing.preparation else ""
-            lines.append(f"- {q}{unit}{desc}{ing.name}{prep}")
+            lines.append(f"- {self.format_ingredient(ing)}")
         return "\n".join(lines)
 
     # -------------------------
@@ -289,25 +329,37 @@ class RecipeBot:
     # -------------------------
 
     def get_current_step(self) -> Step:
-        assert self.recipe is not None
+        """Get the current step, raising an error if no recipe is loaded."""
+        if self.recipe is None:
+            raise ValueError("No recipe loaded. Please load a recipe first.")
+        if not self.recipe.steps:
+            raise ValueError("Recipe has no steps.")
+        if self.current_step_idx >= len(self.recipe.steps):
+            raise ValueError(f"Step index {self.current_step_idx} out of range.")
         return self.recipe.steps[self.current_step_idx]
 
     def show_current_step(self) -> str:
-        step = self.get_current_step()
-        ordinal = self.ordinal(step.step_number)
-        return f"The {ordinal} step is: {step.description}"
+        """Display the current step."""
+        try:
+            step = self.get_current_step()
+            ordinal = self.ordinal(step.step_number)
+            return f"The {ordinal} step is: {step.description}"
+        except ValueError as e:
+            return str(e)
 
     def next_step(self) -> str:
-        assert self.recipe is not None
+        """Move to the next step."""
+        if self.recipe is None:
+            return "No recipe loaded. Please load a recipe first."
         if self.current_step_idx + 1 >= len(self.recipe.steps):
             return "You are at the last step."
         self.current_step_idx += 1
         return self.show_current_step()
 
     def prev_step(self) -> str:
+        """Go to the previous step."""
         if self.current_step_idx == 0:
             return "You are at the first step."
-            # Already at beginning
         self.current_step_idx -= 1
         return self.show_current_step()
 
@@ -325,14 +377,19 @@ class RecipeBot:
     # -------------------------
 
     def answer_time_question(self) -> str:
-        step = self.get_current_step()
+        """Answer questions about cooking time."""
+        if self.recipe is None:
+            return "No recipe loaded. Please load a recipe first."
+        try:
+            step = self.get_current_step()
+        except ValueError as e:
+            return str(e)
 
         # 1. Check current step
         if step.time.get("duration"):
             return f"In this step, the time is {step.time['duration']}."
 
         # 2. Check any step that mentions time + a similar action
-        assert self.recipe is not None
         verbs = set(step.methods)
         for s in self.recipe.steps:
             if s.time.get("duration"):
@@ -346,7 +403,13 @@ class RecipeBot:
         return "The recipe does not specify a clear time here."
 
     def answer_temp_question(self) -> str:
-        step = self.get_current_step()
+        """Answer questions about oven temperature."""
+        if self.recipe is None:
+            return "No recipe loaded. Please load a recipe first."
+        try:
+            step = self.get_current_step()
+        except ValueError as e:
+            return str(e)
 
         # 1. Current step
         if "oven" in step.temperature:
@@ -357,14 +420,15 @@ class RecipeBot:
             return f"The oven should be at {step.context['oven_temperature']}."
 
         # 3. Any step with oven temperature
-        assert self.recipe is not None
         for s in self.recipe.steps:
             if "oven" in s.temperature:
                 return f"The recipe uses an oven temperature of {s.temperature['oven']}."
         return "I couldn't find an oven temperature in the recipe."
 
     def answer_quantity_question(self, user: str) -> str:
-        assert self.recipe is not None
+        """Answer questions about ingredient quantities."""
+        if self.recipe is None:
+            return "No recipe loaded. Please load a recipe first."
         norm = self.normalize(user)
 
         # Try to identify all ingredient names mentioned in the question
@@ -379,11 +443,7 @@ class RecipeBot:
 
         # If they mention specific ingredient(s)
         if mentioned:
-            lines = []
-            for ing in mentioned:
-                q = f"{ing.quantity:g} " if ing.quantity is not None else ""
-                unit = f"{ing.unit} " if ing.unit else ""
-                lines.append(f"- {q}{unit}{ing.name}")
+            lines = [f"- {self.format_ingredient(ing)}" for ing in mentioned]
             if len(lines) == 1:
                 return f"You need {lines[0][2:]}."
             else:
@@ -397,9 +457,7 @@ class RecipeBot:
             for name in step.ingredients:
                 for ing in self.recipe.ingredients:
                     if ing.name.lower() == name:
-                        q = f"{ing.quantity:g} " if ing.quantity is not None else ""
-                        unit = f"{ing.unit} " if ing.unit else ""
-                        lines.append(f"- {q}{unit}{ing.name}")
+                        lines.append(f"- {self.format_ingredient(ing)}")
             if lines:
                 if len(lines) == 1:
                     return f"For that, you need {lines[0][2:]}."
@@ -413,14 +471,15 @@ class RecipeBot:
     # -------------------------
 
     def answer_vague_how_to(self) -> str:
+        """Answer vague 'how do I do that' questions."""
         step = self.get_current_step()
         if step.action:
-            query = f"how to {step.action}".replace(" ", "+")
-            return f"https://www.youtube.com/results?search_query={query}"
+            query = f"how to {step.action}"
+            return f"https://www.youtube.com/results?search_query={quote(query)}"
         # fallback: use any method in this step
         if step.methods:
-            query = f"how to {step.methods[0]}".replace(" ", "+")
-            return f"https://www.youtube.com/results?search_query={query}"
+            query = f"how to {step.methods[0]}"
+            return f"https://www.youtube.com/results?search_query={quote(query)}"
         return "I'm not sure what 'that' refers to in this step."
 
 
