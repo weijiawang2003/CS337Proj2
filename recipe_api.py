@@ -1,14 +1,3 @@
-"""
-recipe_api.py
-
-Provides:
-- Data classes: Ingredient, Step, Recipe
-- Main function: parse_recipe_from_url(url) -> Recipe
-
-Requires:
-    pip install requests beautifulsoup4
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -21,33 +10,31 @@ import requests
 from bs4 import BeautifulSoup
 
 
-# -------------------------
-# Data Classes
-# -------------------------
+
 
 @dataclass
 class Ingredient:
-    raw: str                    # original text line
+    raw: str                    
     name: str
-    quantity: Optional[float]   # parsed numeric quantity (if possible)
-    unit: Optional[str]         # cup, tsp, etc.
-    descriptor: Optional[str]   # fresh, large, lean, etc.
-    preparation: Optional[str]  # finely chopped, shredded, etc.
+    quantity: Optional[float] 
+    unit: Optional[str] 
+    descriptor: Optional[str]
+    preparation: Optional[str] 
 
 
 @dataclass
 class Step:
     step_number: int
-    description: str            # atomic step text
+    description: str           
     ingredients: List[str] = field(default_factory=list)
     tools: List[str] = field(default_factory=list)
     methods: List[str] = field(default_factory=list)
     time: Dict[str, str] = field(default_factory=dict)
     temperature: Dict[str, str] = field(default_factory=dict)
-    action: Optional[str] = None        # main verb / method
-    objects: List[str] = field(default_factory=list)  # ingredients acted on
+    action: Optional[str] = None        
+    objects: List[str] = field(default_factory=list)  
     modifiers: Dict[str, str] = field(default_factory=dict)
-    context: Dict[str, str] = field(default_factory=dict)  # carried info (e.g. oven temp)
+    context: Dict[str, str] = field(default_factory=dict)  
 
 
 @dataclass
@@ -59,10 +46,6 @@ class Recipe:
     methods: List[str]
     steps: List[Step]
 
-
-# -------------------------
-# Lexicons
-# -------------------------
 
 UNITS = [
     "teaspoon", "teaspoons", "tsp", "tablespoon", "tablespoons", "tbsp",
@@ -100,9 +83,7 @@ OTHER_METHODS = [
 ]
 
 
-# -------------------------
-# HTML Fetching & Base Parsing
-# -------------------------
+
 
 def fetch_html(url: str) -> str:
     """Fetch page HTML from a URL."""
@@ -112,26 +93,22 @@ def fetch_html(url: str) -> str:
 
 
 def parse_allrecipes_basic(html: str) -> Dict[str, object]:
-    """
-    Extract title, raw ingredients, and raw steps from an AllRecipes page
-    using JSON-LD embedded in the HTML.
-    """
+
     soup = BeautifulSoup(html, "html.parser")
     json_ld = soup.find("script", type="application/ld+json")
     if json_ld is None or not json_ld.string:
         raise ValueError("Could not find recipe JSON-LD on page.")
 
     data = json.loads(json_ld.string)
-
-    # Sometimes it's a list, sometimes a single dict
     if isinstance(data, list):
         recipe_obj = None
+
         for item in data:
-            # item["@type"] can be "Recipe" or ["Thing","Recipe"] etc.
             t = item.get("@type")
             if t == "Recipe" or (isinstance(t, list) and "Recipe" in t):
                 recipe_obj = item
                 break
+
         if recipe_obj is None:
             raise ValueError("JSON-LD does not contain a Recipe object.")
         data = recipe_obj
@@ -157,26 +134,15 @@ def parse_allrecipes_basic(html: str) -> Dict[str, object]:
     }
 
 
-# -------------------------
-# Ingredient Parsing
-# -------------------------
 
 def parse_quantity(token: str) -> Optional[float]:
-    """
-    Parse token as quantity. Handles:
-    - "1"
-    - "1/2"
-    - "1-1/2"
-    Returns float or None if not parseable.
-    """
+
     token = token.strip()
-    # direct float
     try:
         return float(token)
     except ValueError:
         pass
 
-    # fraction like "1/2"
     if "/" in token and "-" not in token:
         parts = token.split("/")
         if len(parts) == 2:
@@ -186,7 +152,6 @@ def parse_quantity(token: str) -> Optional[float]:
             except ValueError:
                 return None
 
-    # mixed fraction like "1-1/2"
     if "-" in token:
         parts = token.split("-")
         if len(parts) == 2:
@@ -203,10 +168,6 @@ def parse_quantity(token: str) -> Optional[float]:
 
 
 def parse_ingredient_line(line: str) -> Ingredient:
-    """
-    Rules-based parsing of ingredient string into structured fields.
-    This is intentionally approximate / "good enough".
-    """
     raw = line.strip()
     tokens = raw.split()
     quantity: Optional[float] = None
@@ -215,26 +176,24 @@ def parse_ingredient_line(line: str) -> Ingredient:
     name_tokens: List[str] = []
     preparation: Optional[str] = None
 
-    # quantity: first token
     if tokens:
         q = parse_quantity(tokens[0])
         if q is not None:
             quantity = q
             tokens = tokens[1:]
 
-    # unit: next token if in UNITS
+
     if tokens and tokens[0].lower() in UNITS:
         unit = tokens[0].lower()
         tokens = tokens[1:]
 
-    # split by comma to separate preparation
     before_comma, *after_comma = " ".join(tokens).split(",", 1)
     if after_comma:
         prep_str = after_comma[0].strip()
         if prep_str:
             preparation = prep_str
 
-    # descriptors vs name
+
     for tok in before_comma.split():
         if tok.lower() in DESCRIPTORS:
             descriptor_tokens.append(tok.lower())
@@ -258,24 +217,13 @@ def parse_ingredients(raw_ingredients: List[str]) -> List[Ingredient]:
     return [parse_ingredient_line(line) for line in raw_ingredients]
 
 
-# -------------------------
-# Step Parsing & Annotation
-# -------------------------
 
 def split_into_atomic_steps(step_text: str) -> List[str]:
-    """
-    Split a raw instruction into smaller atomic clauses.
-    Here we use a simple heuristic: split on '.' and ';'.
-    You can refine this if you want extra credit.
-    """
     parts = re.split(r"[.;]", step_text)
     return [p.strip() for p in parts if p.strip()]
 
 
 def find_items_in_text(text: str, vocab: List[str]) -> List[str]:
-    """
-    Return all words/phrases from vocab that appear in text as separate words.
-    """
     text_lower = text.lower()
     found: List[str] = []
     for word in vocab:
@@ -285,10 +233,6 @@ def find_items_in_text(text: str, vocab: List[str]) -> List[str]:
 
 
 def extract_time(text: str) -> Dict[str, str]:
-    """
-    Extract a simple 'duration' from text, e.g.
-    "bake for 30 minutes" -> {"duration": "30 minutes"}
-    """
     match = re.search(r"(\d+)\s*(minutes?|mins?|hours?|hrs?)", text, flags=re.I)
     if match:
         return {"duration": match.group(0)}
@@ -296,10 +240,6 @@ def extract_time(text: str) -> Dict[str, str]:
 
 
 def extract_temperature(text: str) -> Dict[str, str]:
-    """
-    Extract a simple oven temperature from text, e.g.
-    "350 degrees F" or "350 F".
-    """
     match = re.search(r"(\d+)\s*(degrees\s*)?(F|C)", text, flags=re.I)
     if match:
         return {"oven": match.group(0)}
@@ -307,10 +247,6 @@ def extract_temperature(text: str) -> Dict[str, str]:
 
 
 def build_steps(steps_raw: List[str], ingredients: List[Ingredient]) -> List[Step]:
-    """
-    Convert raw instruction strings into annotated Step objects.
-    Also carries forward oven temperature as 'context'.
-    """
     steps: List[Step] = []
     ingredient_names = [ing.name.lower() for ing in ingredients]
 
@@ -328,22 +264,22 @@ def build_steps(steps_raw: List[str], ingredients: List[Ingredient]) -> List[Ste
 
             time_info = extract_time(text)
             temp_info = extract_temperature(text)
+
             if "oven" in temp_info:
                 current_oven_temp = temp_info["oven"]
-
-            # find ingredient mentions
             used_ingredients: List[str] = []
             text_lower = text.lower()
+
             for name in ingredient_names:
                 if name and re.search(r"\b" + re.escape(name) + r"\b", text_lower):
                     used_ingredients.append(name)
 
             action = methods[0] if methods else None
 
+
             context: Dict[str, str] = {}
             if current_oven_temp:
                 context["oven_temperature"] = current_oven_temp
-
             step = Step(
                 step_number=step_counter,
                 description=text,
@@ -372,9 +308,6 @@ def collect_recipe_tools_and_methods(steps: List[Step]) -> Tuple[List[str], List
     return sorted(tools_set), sorted(methods_set)
 
 
-# -------------------------
-# Public API
-# -------------------------
 
 def parse_recipe_from_url(url: str) -> Recipe:
     """
@@ -397,8 +330,6 @@ def parse_recipe_from_url(url: str) -> Recipe:
         steps=steps,
     )
 
-
-# Simple manual test (run this file directly)
 if __name__ == "__main__":
     test_url = input("Enter an AllRecipes URL: ").strip()
     recipe = parse_recipe_from_url(test_url)

@@ -1,15 +1,3 @@
-"""
-interface.py
-
-Terminal-based conversational interface for the recipe parser.
-Extra credit:
-- Optional speech-to-text input using the microphone (speech_recognition).
-- More flexible language understanding (how much / how many / etc.).
-
-Run:
-    python interface.py
-"""
-
 from __future__ import annotations
 
 from typing import Optional, Any
@@ -19,24 +7,24 @@ from urllib.parse import quote
 
 from recipe_api import parse_recipe_from_url, Recipe, Step
 
-# Optional STT imports
+
 try:
     import speech_recognition as sr
 except ImportError:
     sr = None
 
-# Constants
 EXIT_COMMANDS = ["quit", "exit", "q"]
 QUIT_MESSAGE = "Bot: Goodbye!"
+
+
 
 
 class RecipeBot:
     def __init__(self, use_speech: bool = False):
         self.recipe: Optional[Recipe] = None
-        self.current_step_idx: int = 0  # index in recipe.steps
+        self.current_step_idx: int = 0  
         self.use_speech = use_speech and (sr is not None)
-        self.recognizer: Optional[Any] = None  # speech_recognition.Recognizer if sr is available
-
+        self.recognizer: Optional[Any] = None 
         if use_speech and sr is None:
             print("Bot: speech_recognition is not installed; falling back to text input.")
             self.use_speech = False
@@ -44,9 +32,8 @@ class RecipeBot:
             # Initialize recognizer once for reuse
             self.recognizer = sr.Recognizer()
 
-    # -------------------------
-    # Utility: normalization
-    # -------------------------
+
+
 
     @staticmethod
     def normalize(text: str) -> str:
@@ -59,9 +46,6 @@ class RecipeBot:
         text = " ".join(text.split())
         return text
 
-    # -------------------------
-    # Main loop
-    # -------------------------
 
     def run(self) -> None:
         print("Bot: Hi! I can walk you through a recipe from AllRecipes.com.")
@@ -75,10 +59,12 @@ class RecipeBot:
         while True:
             user = self.get_user_input()
             if user is None:
-                # speech recognition failed; just keep looping
                 continue
             
-            if not user:  # Handle empty input
+
+
+            if not user:  
+                
                 continue
 
             norm = self.normalize(user)
@@ -126,41 +112,37 @@ class RecipeBot:
             print(f"\n{QUIT_MESSAGE}")
             return "quit"
 
-    # -------------------------
-    # Input handling
-    # -------------------------
+
+
 
     def handle_input(self, user: str) -> str:
         raw = user.strip()
         norm = self.normalize(raw)
 
-        # 1. Load recipe if a URL is given
+
         if raw.startswith("http"):
             return self.load_recipe(raw)
 
-        # If we don't have a recipe yet, force the user to provide URL
         if self.recipe is None:
             if "allrecipes" in norm:
-                # If they said "allrecipes dot com slash ..." etc. this is harder,
-                # but for now we assume they either paste or dictate a proper URL.
+
                 url = raw
                 if not url.startswith("http"):
                     url = "https://" + url
                 return self.load_recipe(url)
             return "Please paste or say an AllRecipes.com URL first."
 
-        # At this point, we have a recipe loaded.
 
-        # 2. High-level choices after loading
+
         if norm in ["1", "ingredients", "ingredient list", "show me the ingredients list",
-                    "show ingredients", "go over ingredients"]:
+                    "show ingredients", "go over ingredients","Go over ingredients list"]:
             return self.show_ingredients()
 
-        if norm in ["2", "steps", "go over steps", "start steps", "show steps"]:
+        if norm in ["2", "steps", "go over steps", "start steps", "show steps","Go over recipe steps"]:
             self.current_step_idx = 0
             return self.show_current_step()
 
-        # 3. Navigation commands (more flexible)
+
         if self.is_next_command(norm):
             return self.next_step()
 
@@ -170,11 +152,13 @@ class RecipeBot:
         if self.is_repeat_command(norm):
             return self.show_current_step()
 
+
         if "first step" in norm or "go to step one" in norm or "go to the first step" in norm:
             self.current_step_idx = 0
             return self.show_current_step()
 
-        # 4. Time / temperature / quantity questions (more flexible)
+
+
         if self.is_time_question(norm):
             return self.answer_time_question()
 
@@ -184,12 +168,11 @@ class RecipeBot:
         if self.is_quantity_question(norm):
             return self.answer_quantity_question(raw)
 
-        # 5. Clarification: "what is X" (simple external search)
         if norm.startswith("what is "):
             query = norm[len("what is "):].strip()
             return f"https://www.google.com/search?q=what+is+{quote(query)}"
+        
 
-        # 6. Procedure: "how do I X" / "how to X"
         if norm.startswith("how do i "):
             query = norm[len("how do i "):].strip()
             return f"https://www.youtube.com/results?search_query=how+to+{quote(query)}"
@@ -198,11 +181,12 @@ class RecipeBot:
             query = norm[len("how to "):].strip()
             return f"https://www.youtube.com/results?search_query=how+to+{quote(query)}"
 
-        # Vague "How do I do that?"
+
         if "how do i do that" in norm or "how do i do this" in norm or "how do i do it" in norm:
             return self.answer_vague_how_to()
 
-        # Fallback
+
+
         return ("I didn't quite catch that.\n"
                 "You can try commands like:\n"
                 "- '1' or 'show me the ingredients list'\n"
@@ -216,9 +200,8 @@ class RecipeBot:
                 "- 'What is a whisk?'\n"
                 "- 'How do I knead the dough?'")
 
-    # -------------------------
-    # Small intent helpers
-    # -------------------------
+
+
 
     @staticmethod
     def is_next_command(norm: str) -> bool:
@@ -245,10 +228,6 @@ class RecipeBot:
 
     @staticmethod
     def is_time_question(norm: str) -> bool:
-        # Handle variations like:
-        # - "how long do I bake it for"
-        # - "for how long should it cook"
-        # - "what is the cooking time"
         if "how long" in norm or "for how long" in norm:
             return True
         if "cooking time" in norm or "baking time" in norm:
@@ -257,12 +236,10 @@ class RecipeBot:
             return True
         return False
 
+
+
     @staticmethod
     def is_temp_question(norm: str) -> bool:
-        # Variations:
-        # - "what temperature should the oven be"
-        # - "what temp do I bake at"
-        # - "how hot should the oven be"
         if "temperature" in norm or "temp" in norm:
             if "oven" in norm or "bake" in norm:
                 return True
@@ -281,9 +258,7 @@ class RecipeBot:
             return True
         return False
 
-    # -------------------------
-    # Recipe loading & display
-    # -------------------------
+
 
     @staticmethod
     def format_ingredient(ing: Ingredient) -> str:
@@ -324,9 +299,8 @@ class RecipeBot:
             lines.append(f"- {self.format_ingredient(ing)}")
         return "\n".join(lines)
 
-    # -------------------------
-    # Step navigation
-    # -------------------------
+
+
 
     def get_current_step(self) -> Step:
         """Get the current step, raising an error if no recipe is loaded."""
@@ -372,9 +346,7 @@ class RecipeBot:
             suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
         return f"{n}{suffix}"
 
-    # -------------------------
-    # Parameter questions
-    # -------------------------
+
 
     def answer_time_question(self) -> str:
         """Answer questions about cooking time."""
@@ -385,11 +357,12 @@ class RecipeBot:
         except ValueError as e:
             return str(e)
 
-        # 1. Check current step
+
         if step.time.get("duration"):
             return f"In this step, the time is {step.time['duration']}."
 
-        # 2. Check any step that mentions time + a similar action
+
+
         verbs = set(step.methods)
         for s in self.recipe.steps:
             if s.time.get("duration"):
@@ -402,6 +375,10 @@ class RecipeBot:
                 return f"Earlier, the recipe says: {s.time['duration']}."
         return "The recipe does not specify a clear time here."
 
+
+
+
+
     def answer_temp_question(self) -> str:
         """Answer questions about oven temperature."""
         if self.recipe is None:
@@ -411,15 +388,12 @@ class RecipeBot:
         except ValueError as e:
             return str(e)
 
-        # 1. Current step
         if "oven" in step.temperature:
             return f"In this step, the oven should be at {step.temperature['oven']}."
 
-        # 2. Context from previous preheat
         if "oven_temperature" in step.context:
             return f"The oven should be at {step.context['oven_temperature']}."
 
-        # 3. Any step with oven temperature
         for s in self.recipe.steps:
             if "oven" in s.temperature:
                 return f"The recipe uses an oven temperature of {s.temperature['oven']}."
@@ -430,29 +404,24 @@ class RecipeBot:
         if self.recipe is None:
             return "No recipe loaded. Please load a recipe first."
         norm = self.normalize(user)
-
-        # Try to identify all ingredient names mentioned in the question
         mentioned = []
         for ing in self.recipe.ingredients:
             name = ing.name.lower()
+
             if not name:
                 continue
-            # allow partial matches but word-boundary-based
             if re.search(r"\b" + re.escape(name) + r"\b", norm):
                 mentioned.append(ing)
 
-        # If they mention specific ingredient(s)
         if mentioned:
             lines = [f"- {self.format_ingredient(ing)}" for ing in mentioned]
             if len(lines) == 1:
                 return f"You need {lines[0][2:]}."
             else:
                 return "Here are the quantities:\n" + "\n".join(lines)
-
-        # Vague "How much/how many of that/it/this?"
+            
         step = self.get_current_step()
         if step.ingredients:
-            # Try all ingredients in this step
             lines = []
             for name in step.ingredients:
                 for ing in self.recipe.ingredients:
@@ -465,10 +434,6 @@ class RecipeBot:
                     return "For this step, the relevant quantities are:\n" + "\n".join(lines)
 
         return "I'm not sure which ingredient you mean."
-
-    # -------------------------
-    # Vague procedure questions
-    # -------------------------
 
     def answer_vague_how_to(self) -> str:
         """Answer vague 'how do I do that' questions."""
@@ -484,7 +449,6 @@ class RecipeBot:
 
 
 if __name__ == "__main__":
-    # Ask user whether to enable speech input for this run
     use_speech_choice = input("Enable speech input? (y/n): ").strip().lower()
     use_speech = use_speech_choice.startswith("y")
     bot = RecipeBot(use_speech=use_speech)
